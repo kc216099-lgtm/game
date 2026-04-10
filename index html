@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rivals FPS Clone</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Inter', sans-serif; touch-action: none; -webkit-user-select: none; user-select: none; }
+        
+        /* Crosshair & Markers */
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
+            transform: translate(-50%, -50%); pointer-events: none; display: none; z-index: 50;
+        }
+        #crosshair::before, #crosshair::after { content: ''; position: absolute; background: rgba(0, 255, 0, 0.8); }
+        #crosshair::before { left: 9px; top: 0; width: 2px; height: 20px; }
+        #crosshair::after { left: 0; top: 9px; width: 20px; height: 2px; }
+        
+        #hit-marker {
+            position: absolute; top: 50%; left: 50%; width: 30px; height: 30px;
+            transform: translate(-50%, -50%) rotate(45deg); pointer-events: none; display: none; z-index: 51;
+        }
+        .marker-line { position: absolute; background: #ff0000; }
+        .v { width: 2px; height: 10px; left: 14px; }
+        .h { width: 10px; height: 2px; top: 14px; }
+        .t { top: 0; } .b { bottom: 0; } .l { left: 0; } .r { right: 0; }
+
+        /* UI Overlays */
+        #ui-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; color: white; padding: env(safe-area-inset-top) 20px; display: none; z-index: 40;
+        }
+
+        /* Mobile Controls */
+        #mobile-controls {
+            position: absolute; bottom: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; display: none; z-index: 45;
+        }
+        .touch-btn {
+            pointer-events: auto; background: rgba(255, 255, 255, 0.1); 
+            backdrop-filter: blur(5px); border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 50%; display: flex; items-center; justify-center;
+            color: white; font-weight: bold; font-size: 14px;
+            active:scale-90 transition-transform: transform 0.1s;
+        }
+        #joystick-base {
+            position: absolute; bottom: 40px; left: 40px; width: 120px; height: 120px;
+            background: rgba(255, 255, 255, 0.1); border-radius: 50%; pointer-events: auto;
+        }
+        #joystick-knob {
+            position: absolute; top: 35px; left: 35px; width: 50px; height: 50px;
+            background: white; border-radius: 50%;
+        }
+        #fire-btn { position: absolute; bottom: 40px; right: 40px; width: 100px; height: 100px; background: rgba(239, 68, 68, 0.4); border-color: #ef4444; }
+        #ads-btn { position: absolute; bottom: 150px; right: 50px; width: 70px; height: 70px; }
+        #reload-btn-mobile { position: absolute; bottom: 40px; right: 160px; width: 70px; height: 70px; }
+
+        /* Menu Styling */
+        #menu, #game-over {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95);
+            display: flex; flex-direction: column; justify-content: flex-start; align-items: center; z-index: 100;
+            overflow-y: auto; padding-bottom: 50px;
+        }
+        #game-over { display: none; justify-content: center; }
+
+        .card-select, .perk-card {
+            cursor: pointer; transition: all 0.2s ease; border: 4px solid #1f2937; flex-shrink: 0; pointer-events: auto;
+        }
+        .card-select:hover, .perk-card:not(.bought):hover { transform: scale(1.05); border-color: #3b82f6; }
+        .card-active { border-color: #3b82f6; background: #1e3a8a !important; }
+        .bought { border-color: #10b981; background: #064e3b !important; cursor: default; }
+
+        .btn-deploy { cursor: pointer; pointer-events: auto; transition: all 0.2s; }
+        .btn-deploy:hover { transform: translateY(-2px); filter: brightness(1.2); }
+
+        .horizontal-grid {
+            display: flex; gap: 1rem; overflow-x: auto; width: 100%; padding: 10px;
+            scrollbar-width: thin; scrollbar-color: #3b82f6 #1f2937;
+        }
+
+        #scope-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            border: 25vh solid black; border-left-width: 35vw; border-right-width: 35vw;
+            box-sizing: border-box; display: none; pointer-events: none; z-index: 45;
+        }
+        .vignette { position: absolute; top: 0; left: 0; width: 100%; height: 100%; box-shadow: inset 0 0 150px rgba(0,0,0,1); border-radius: 50%; }
+        
+        .point-pop {
+            position: absolute; color: #4ade80; font-weight: 900; font-size: 20px;
+            pointer-events: none; animation: float-up 0.8s ease-out forwards;
+            text-shadow: 0 0 10px rgba(0,0,0,0.5); z-index: 60;
+        }
+        @keyframes float-up { 0 { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-70px); opacity: 0; } }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+    <!-- HUD -->
+    <div id="ui-overlay">
+        <div class="flex justify-between items-start">
+            <div class="bg-black/50 p-3 rounded-xl border-l-4 border-blue-500">
+                <div class="text-[10px] text-blue-400 font-bold uppercase">Health</div>
+                <div id="health-bar" class="w-32 md:w-48 h-3 bg-gray-800 rounded-full mt-1 overflow-hidden">
+                    <div id="health-fill" class="h-full bg-blue-500 transition-all duration-300" style="width: 100%"></div>
+                </div>
+                <div id="health-text" class="text-lg font-black mt-1">150</div>
+            </div>
+
+            <div class="flex flex-col items-center">
+                <div class="bg-black/50 p-3 rounded-xl text-center mb-1">
+                    <div class="flex items-center gap-3">
+                        <span id="player-score" class="text-2xl md:text-4xl font-black text-blue-500">0</span>
+                        <span class="text-gray-600">-</span>
+                        <span id="bot-score" class="text-2xl md:text-4xl font-black text-red-500">0</span>
+                    </div>
+                </div>
+                <div class="bg-blue-600/80 px-3 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest">
+                    Points: <span id="session-points">0</span>
+                </div>
+            </div>
+
+            <div class="bg-black/50 p-3 rounded-xl border-r-4 border-yellow-500 text-right">
+                <div id="weapon-name-ui" class="text-[10px] text-yellow-400 font-bold uppercase">AK-47</div>
+                <div id="ammo-text" class="text-xl md:text-3xl font-black">30 / 30</div>
+            </div>
+        </div>
+        <div id="kill-feed" class="absolute bottom-1/4 left-10 space-y-2 pointer-events-none"></div>
+    </div>
+
+    <!-- Mobile Controls -->
+    <div id="mobile-controls">
+        <div id="joystick-base">
+            <div id="joystick-knob"></div>
+        </div>
+        <div id="fire-btn" class="touch-btn">FIRE</div>
+        <div id="ads-btn" class="touch-btn">ADS</div>
+        <div id="reload-btn-mobile" class="touch-btn">RELOAD</div>
+    </div>
+
+    <!-- Main Menu -->
+    <div id="menu">
+        <div class="w-full max-w-6xl px-6 py-8">
+            <div class="flex justify-between items-start">
+                <div>
+                    <h1 class="text-5xl md:text-7xl font-black text-white mb-2 italic tracking-tighter">RIVALS</h1>
+                    <p class="text-gray-400 mb-8 uppercase tracking-widest text-xs">Loadout & Deploy</p>
+                </div>
+                <div class="flex items-center gap-4 bg-gray-900 p-2 rounded-xl">
+                    <span class="text-[10px] text-gray-500 font-bold uppercase">Music</span>
+                    <button onclick="toggleMusic()" id="music-btn" class="bg-blue-600 px-4 py-1 rounded-lg text-xs font-bold text-white">ON</button>
+                </div>
+            </div>
+            
+            <div class="flex flex-col lg:flex-row gap-6 items-stretch mb-8">
+                <div class="flex-grow">
+                    <h2 class="text-lg font-black text-white mb-4 uppercase italic border-b border-white/10 pb-2">Armory</h2>
+                    <div class="horizontal-grid">
+                        <div onclick="setWeapon('ak')" id="w-ak" class="card-select card-active bg-gray-900 p-4 rounded-xl w-40 text-center">
+                            <div class="text-2xl mb-1">🔫</div>
+                            <h3 class="text-white font-bold text-sm">AK-47</h3>
+                        </div>
+                        <div onclick="setWeapon('sniper')" id="w-sniper" class="card-select bg-gray-900 p-4 rounded-xl w-40 text-center">
+                            <div class="text-2xl mb-1">🔭</div>
+                            <h3 class="text-white font-bold text-sm">SNIPER</h3>
+                        </div>
+                        <div onclick="setWeapon('smg')" id="w-smg" class="card-select bg-gray-900 p-4 rounded-xl w-40 text-center">
+                            <div class="text-2xl mb-1">⚡</div>
+                            <h3 class="text-white font-bold text-sm">SMG</h3>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="w-full lg:w-64">
+                    <h2 class="text-lg font-black text-white mb-4 uppercase italic border-b border-white/10 pb-2">Stats</h2>
+                    <div class="bg-blue-600/10 border border-blue-500/30 p-4 rounded-xl flex flex-row lg:flex-col gap-4">
+                        <div>
+                            <div class="text-[10px] text-blue-400 font-bold uppercase">Career Points</div>
+                            <div id="career-points" class="text-2xl font-black text-white">0</div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] text-blue-400 font-bold uppercase">Best Streak</div>
+                            <div id="career-streak" class="text-2xl font-black text-white">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Shop -->
+            <div class="mb-8">
+                <h2 class="text-lg font-black text-white mb-4 uppercase italic border-b border-white/10 pb-2">Perks</h2>
+                <div class="horizontal-grid">
+                    <div onclick="buyPerk('health')" id="p-health" class="perk-card bg-gray-900 p-4 rounded-xl w-52 text-center">
+                        <div class="text-xl">🛡️</div>
+                        <h3 class="text-white font-bold text-sm">Extra Plating</h3>
+                        <div class="mt-2 inline-block bg-blue-600 px-3 py-1 rounded-full text-[10px] font-bold text-white">500 PTS</div>
+                    </div>
+                    <div onclick="buyPerk('speed')" id="p-speed" class="perk-card bg-gray-900 p-4 rounded-xl w-52 text-center">
+                        <div class="text-xl">👟</div>
+                        <h3 class="text-white font-bold text-sm">Swift Boots</h3>
+                        <div class="mt-2 inline-block bg-blue-600 px-3 py-1 rounded-full text-[10px] font-bold text-white">750 PTS</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-4">
+                <h2 class="text-lg font-black text-white mb-4 uppercase italic border-b border-white/10 pb-2">Deploy</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <button onclick="selectMap('cyber')" class="btn-deploy bg-blue-600/20 text-blue-400 p-4 rounded-xl border border-blue-600 font-bold uppercase text-sm">Cyber City</button>
+                    <button onclick="selectMap('desert')" class="btn-deploy bg-yellow-600/20 text-yellow-400 p-4 rounded-xl border border-yellow-600 font-bold uppercase text-sm">Desert Outpost</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="game-over">
+        <h2 class="text-5xl font-black text-white mb-2 italic tracking-tighter">MATCH ENDED</h2>
+        <div class="text-3xl font-bold text-blue-500 mb-2" id="final-score-display">0 - 0</div>
+        <button onclick="resetGame()" class="bg-blue-600 text-white px-10 py-4 rounded-xl font-bold uppercase mt-4">Main Menu</button>
+    </div>
+
+    <div id="scope-overlay"><div class="vignette"></div></div>
+    <div id="crosshair"></div>
+    <div id="hit-marker">
+        <div class="marker-line v t"></div><div class="marker-line v b"></div>
+        <div class="marker-line h l"></div><div class="marker-line h r"></div>
+    </div>
+
+    <script>
+        let scene, camera, renderer, clock, raycaster;
+        let isGameRunning = false, isGameOver = false, currentMap = 'cyber';
+        
+        // Physics / Movement
+        let velocity = new THREE.Vector3(), direction = new THREE.Vector3();
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        
+        // Stats
+        let maxHealth = 150, health = maxHealth;
+        let playerScore = 0, botScore = 0, currentPoints = 0, totalCareerPoints = 0, currentStreak = 0, maxCareerStreak = 0;
+        
+        // Weapon Logic
+        let canShoot = true, isReloading = false, isScoped = false, isFiring = false;
+        let currentWeaponType = 'ak', ammo = 30;
+        let gunMesh, gunContainer, enemy, enemyHealth = 100, enemyLastShot = 0;
+
+        // Music System
+        let audioCtx = null, musicInterval = null, isMusicEnabled = true;
+
+        // Mobile Controls State
+        let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        let joystickActive = false, joystickStart = {x: 0, y: 0}, joystickMove = {x: 0, y: 0};
+        let lookTouchId = null, lastLookPos = {x: 0, y: 0};
+
+        const WEAPONS = {
+            ak: { damage: 30, headshot: 100, rpm: 600, ammo: 30, recoil: 0.04, spread: 0.01, color: 0x5c3317, zoom: 75, auto: true },
+            sniper: { damage: 150, headshot: 200, rpm: 45, ammo: 5, recoil: 0.35, spread: 0.001, color: 0x222222, zoom: 75, scopedZoom: 10, auto: false },
+            smg: { damage: 15, headshot: 45, rpm: 950, ammo: 45, recoil: 0.02, spread: 0.02, color: 0x444444, zoom: 80, auto: true }
+        };
+
+        const PERKS = {
+            health: { cost: 500, bought: false },
+            speed: { cost: 750, bought: false },
+            regen: { cost: 1000, bought: false }
+        };
+
+        function init() {
+            scene = new THREE.Scene();
+            clock = new THREE.Clock();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+            raycaster = new THREE.Raycaster();
+
+            if (isMobile) {
+                document.getElementById('mobile-controls').style.display = 'block';
+                setupMobileEvents();
+            } else {
+                setupDesktopEvents();
+            }
+
+            animate();
+            updateCareerDisplay();
+        }
+
+        // --- Procedural Music Engine ---
+        function startMusic() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (musicInterval) clearInterval(musicInterval);
+            
+            let step = 0;
+            musicInterval = setInterval(() => {
+                if (!isGameRunning || !isMusicEnabled) return;
+                
+                const time = audioCtx.currentTime;
+                
+                // Kick drum on beats 0, 4, 8, 12
+                if (step % 4 === 0) playKick(time);
+                
+                // Snare on 4, 12
+                if (step % 8 === 4) playSnare(time);
+                
+                // Hi-hats
+                playHiHat(time);
+
+                // Synth Bass Line
+                const scale = [55, 65.41, 73.42, 82.41]; // A1, C2, D2, E2
+                const freq = scale[Math.floor(Math.random() * scale.length)];
+                if (step % 2 === 0) playBass(freq, time);
+
+                step = (step + 1) % 16;
+            }, 150); // ~100 BPM 16th notes
+        }
+
+        function playKick(t) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.frequency.setValueAtTime(150, t);
+            osc.frequency.exponentialRampToValueAtTime(0.01, t + 0.5);
+            gain.gain.setValueAtTime(0.3, t);
+            gain.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(t); osc.stop(t + 0.5);
+        }
+
+        function playSnare(t) {
+            const bufferSize = audioCtx.sampleRate * 0.1;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+            
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'highpass'; filter.frequency.value = 1000;
+            const gain = audioCtx.createGain();
+            gain.gain.setValueAtTime(0.2, t);
+            gain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+            noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+            noise.start(t);
+        }
+
+        function playHiHat(t) {
+            const osc = audioCtx.createOscillator();
+            osc.type = 'square';
+            const gain = audioCtx.createGain();
+            osc.frequency.setValueAtTime(10000, t);
+            gain.gain.setValueAtTime(0.05, t);
+            gain.gain.exponentialRampToValueAtTime(0.01, t + 0.05);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(t); osc.stop(t + 0.05);
+        }
+
+        function playBass(freq, t) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(freq, t);
+            gain.gain.setValueAtTime(0.05, t);
+            gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+            osc.connect(gain); gain.connect(audioCtx.destination);
+            osc.start(t); osc.stop(t + 0.1);
+        }
+
+        function toggleMusic() {
+            isMusicEnabled = !isMusicEnabled;
+            const btn = document.getElementById('music-btn');
+            btn.innerText = isMusicEnabled ? 'ON' : 'OFF';
+            btn.className = isMusicEnabled ? 'bg-blue-600 px-4 py-1 rounded-lg text-xs font-bold text-white' : 'bg-gray-700 px-4 py-1 rounded-lg text-xs font-bold text-white';
+        }
+
+        function setupDesktopEvents() {
+            document.addEventListener('keydown', e => { 
+                if(!isGameRunning) return;
+                if (e.code === 'KeyW') moveForward = true;
+                if (e.code === 'KeyS') moveBackward = true;
+                if (e.code === 'KeyA') moveLeft = true;
+                if (e.code === 'KeyD') moveRight = true;
+                if (e.code === 'Space') { isFiring = true; shoot(); }
+                if (e.code === 'KeyR') reload();
+                if (e.code === 'KeyZ' && currentWeaponType === 'sniper') toggleScope();
+            });
+
+            document.addEventListener('keyup', e => {
+                if (e.code === 'KeyW') moveForward = false;
+                if (e.code === 'KeyS') moveBackward = false;
+                if (e.code === 'KeyA') moveLeft = false;
+                if (e.code === 'KeyD') moveRight = false;
+                if (e.code === 'Space') isFiring = false;
+            });
+
+            document.addEventListener('mousedown', e => { 
+                if(isGameRunning) {
+                    if(e.button === 0) { isFiring = true; shoot(); }
+                    if(e.button === 2) toggleScope();
+                }
+            });
+            document.addEventListener('mouseup', e => { if(e.button === 0) isFiring = false; });
+
+            document.addEventListener('mousemove', (e) => {
+                if (isGameRunning && document.pointerLockElement) {
+                    let sensitivity = isScoped ? 0.0005 : 0.002;
+                    camera.rotation.y -= e.movementX * sensitivity;
+                    camera.rotation.x -= e.movementY * sensitivity;
+                    camera.rotation.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, camera.rotation.x));
+                }
+            });
+
+            document.addEventListener('pointerlockchange', () => {
+                if (isGameOver) return;
+                isGameRunning = document.pointerLockElement === document.body;
+                if (isGameRunning) startMusic();
+                syncUIState();
+            });
+        }
+
+        function setupMobileEvents() {
+            const joyBase = document.getElementById('joystick-base');
+            const joyKnob = document.getElementById('joystick-knob');
+
+            joyBase.addEventListener('touchstart', e => {
+                joystickActive = true;
+                const touch = e.touches[0];
+                joystickStart = {x: touch.clientX, y: touch.clientY};
+            });
+
+            document.addEventListener('touchmove', e => {
+                for (let i = 0; i < e.touches.length; i++) {
+                    const touch = e.touches[i];
+                    
+                    // Movement Joystick
+                    if (joystickActive && touch.clientX < window.innerWidth / 2) {
+                        const dx = touch.clientX - joystickStart.x;
+                        const dy = touch.clientY - joystickStart.y;
+                        const dist = Math.min(60, Math.sqrt(dx*dx + dy*dy));
+                        const angle = Math.atan2(dy, dx);
+                        
+                        joystickMove = { x: Math.cos(angle) * (dist/60), y: Math.sin(angle) * (dist/60) };
+                        joyKnob.style.transform = `translate(${Math.cos(angle)*dist}px, ${Math.sin(angle)*dist}px)`;
+                        
+                        moveForward = joystickMove.y < -0.3;
+                        moveBackward = joystickMove.y > 0.3;
+                        moveLeft = joystickMove.x < -0.3;
+                        moveRight = joystickMove.x > 0.3;
+                    } 
+                    // Camera Look (Right side of screen)
+                    else if (touch.clientX > window.innerWidth / 2) {
+                        if (lookTouchId === null) {
+                            lookTouchId = touch.identifier;
+                            lastLookPos = {x: touch.clientX, y: touch.clientY};
+                        } else if (touch.identifier === lookTouchId) {
+                            const dx = touch.clientX - lastLookPos.x;
+                            const dy = touch.clientY - lastLookPos.y;
+                            let sensitivity = isScoped ? 0.001 : 0.005;
+                            camera.rotation.y -= dx * sensitivity;
+                            camera.rotation.x -= dy * sensitivity;
+                            camera.rotation.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, camera.rotation.x));
+                            lastLookPos = {x: touch.clientX, y: touch.clientY};
+                        }
+                    }
+                }
+            });
+
+            document.addEventListener('touchend', e => {
+                let joyStillActive = false;
+                let lookStillActive = false;
+                for(let i=0; i<e.touches.length; i++) {
+                    if (e.touches[i].clientX < window.innerWidth/2) joyStillActive = true;
+                    if (e.touches[i].identifier === lookTouchId) lookStillActive = true;
+                }
+                if (!joyStillActive) {
+                    joystickActive = false;
+                    moveForward = moveBackward = moveLeft = moveRight = false;
+                    joyKnob.style.transform = 'translate(0,0)';
+                }
+                if (!lookStillActive) lookTouchId = null;
+            });
+
+            document.getElementById('fire-btn').addEventListener('touchstart', () => { isFiring = true; shoot(); });
+            document.getElementById('fire-btn').addEventListener('touchend', () => { isFiring = false; });
+            document.getElementById('ads-btn').addEventListener('touchstart', toggleScope);
+            document.getElementById('reload-btn-mobile').addEventListener('touchstart', reload);
+        }
+
+        function syncUIState() {
+            document.getElementById('menu').style.display = isGameRunning ? 'none' : 'flex';
+            document.getElementById('ui-overlay').style.display = isGameRunning ? 'block' : 'none';
+            document.getElementById('crosshair').style.display = (isGameRunning && !isScoped) ? 'block' : 'none';
+            updateUI();
+        }
+
+        function selectMap(mapId) {
+            currentMap = mapId;
+            isGameRunning = true;
+            setupMap(mapId);
+            startMusic();
+            if (!isMobile) document.body.requestPointerLock();
+            syncUIState();
+        }
+
+        function setupMap(mapId) {
+            while(scene.children.length > 0) scene.remove(scene.children[0]);
+            scene.add(new THREE.HemisphereLight(0xeeeeff, 0x777788, 1.2));
+            const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+            sun.position.set(50, 100, 50);
+            scene.add(sun);
+
+            let config = { cyber: [0x111111, 0x00ffff], desert: [0xd2b48c, 0xffe4b5] }[mapId] || [0x111111, 0x00ffff];
+            scene.background = new THREE.Color(config[1]);
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshPhongMaterial({ color: config[0] }));
+            floor.rotation.x = -Math.PI / 2;
+            scene.add(floor);
+
+            gunContainer = new THREE.Group();
+            scene.add(gunContainer);
+            createWeaponModel();
+            
+            camera.position.set(0, 1.7, 0);
+            camera.rotation.set(0,0,0);
+            health = maxHealth;
+            spawnEnemy(true);
+        }
+
+        function createWeaponModel() {
+            if(gunMesh) gunContainer.remove(gunMesh);
+            const w = WEAPONS[currentWeaponType];
+            gunMesh = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.6), new THREE.MeshStandardMaterial({ color: w.color }));
+            const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.4), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+            barrel.rotation.x = Math.PI/2; barrel.position.z = -0.4;
+            gunMesh.add(body, barrel);
+            gunMesh.position.set(0.4, -0.35, -0.7);
+            gunContainer.add(gunMesh);
+        }
+
+        function shoot() {
+            if (!isGameRunning || !canShoot || isReloading || ammo <= 0) return;
+            const w = WEAPONS[currentWeaponType];
+            canShoot = false; ammo--; updateUI();
+            
+            camera.rotation.x += isScoped ? w.recoil * 0.5 : w.recoil;
+            if (gunMesh) gunMesh.position.z += 0.1;
+
+            raycaster.setFromCamera({ x: (Math.random() - 0.5) * w.spread, y: (Math.random() - 0.5) * w.spread }, camera);
+            const hits = raycaster.intersectObjects(enemy.children, true);
+            if (hits.length > 0) {
+                const isHead = hits[0].object.userData.isHead;
+                enemyHealth -= isHead ? w.headshot : w.damage;
+                showHitMarker();
+                addPoints(isHead ? 50 : 10, isHead ? "HEADSHOT" : "");
+                
+                if (enemyHealth <= 0) {
+                    playerScore++; currentStreak++;
+                    maxCareerStreak = Math.max(maxCareerStreak, currentStreak);
+                    addPoints(100, "ELIMINATION");
+                    if (playerScore >= 15) triggerGameOver(); else spawnEnemy();
+                }
+            }
+
+            setTimeout(() => {
+                canShoot = true;
+                if (isFiring && w.auto) shoot();
+            }, 60000 / w.rpm);
+        }
+
+        function reload() {
+            if (isReloading || ammo === WEAPONS[currentWeaponType].ammo) return;
+            isReloading = true; isScoped = false; updateUI();
+            setTimeout(() => {
+                ammo = WEAPONS[currentWeaponType].ammo; isReloading = false;
+                updateUI();
+            }, 1500);
+        }
+
+        function updateUI() {
+            document.getElementById('health-fill').style.width = (health / maxHealth) * 100 + '%';
+            document.getElementById('health-text').innerText = Math.max(0, Math.round(health));
+            document.getElementById('ammo-text').innerText = isReloading ? "RELOADING" : `${ammo}/${WEAPONS[currentWeaponType].ammo}`;
+            document.getElementById('player-score').innerText = playerScore;
+            document.getElementById('bot-score').innerText = botScore;
+            document.getElementById('session-points').innerText = currentPoints;
+            document.getElementById('weapon-name-ui').innerText = currentWeaponType.toUpperCase();
+            
+            document.getElementById('scope-overlay').style.display = isScoped ? 'block' : 'none';
+            camera.fov = isScoped ? (WEAPONS[currentWeaponType].scopedZoom || 20) : WEAPONS[currentWeaponType].zoom;
+            camera.updateProjectionMatrix();
+            if (gunMesh) gunMesh.visible = !isScoped;
+        }
+
+        function spawnEnemy(forced) {
+            if (enemy) scene.remove(enemy);
+            const group = new THREE.Group();
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshPhongMaterial({ color: 0xffccaa }));
+            head.position.y = 2.1; head.userData.isHead = true;
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.0, 0.3), new THREE.MeshPhongMaterial({ color: 0xcc0000 }));
+            body.position.y = 1.4;
+            group.add(head, body);
+            group.position.set(forced ? 0 : (Math.random()-0.5)*40, 0, forced ? -20 : -20 - Math.random()*20);
+            enemy = group; enemyHealth = 100;
+            scene.add(enemy);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (!isGameRunning) { renderer.render(scene, camera); return; }
+
+            const delta = clock.getDelta();
+            
+            // Movement Logic
+            velocity.x -= velocity.x * 10 * delta;
+            velocity.z -= velocity.z * 10 * delta;
+            
+            direction.z = Number(moveForward) - Number(moveBackward);
+            direction.x = Number(moveRight) - Number(moveLeft);
+            direction.normalize();
+
+            let speed = (isScoped) ? 6 : 12;
+            if (PERKS.speed.bought) speed *= 1.3;
+
+            if (moveForward || moveBackward) velocity.z -= direction.z * speed * delta;
+            if (moveLeft || moveRight) velocity.x -= direction.x * speed * delta;
+
+            camera.translateX(-velocity.x * delta);
+            camera.translateZ(velocity.z * delta);
+            
+            // Gun follows camera
+            if (gunContainer) {
+                gunContainer.position.copy(camera.position);
+                gunContainer.rotation.copy(camera.rotation);
+                if (gunMesh) gunMesh.position.z = THREE.MathUtils.lerp(gunMesh.position.z, -0.7, 0.1);
+            }
+
+            // Enemy Logic
+            if (enemy && !isGameOver) {
+                enemy.lookAt(camera.position.x, enemy.position.y, camera.position.z);
+                if (Date.now() - enemyLastShot > 2500) {
+                    enemyLastShot = Date.now();
+                    if (Math.random() > 0.7) {
+                        health -= 25; updateUI();
+                        if(health <= 0) { 
+                            botScore++; health = maxHealth; 
+                            camera.position.set(0,1.7,0);
+                        }
+                    }
+                }
+            }
+            renderer.render(scene, camera);
+        }
+
+        // Shop Helpers
+        function addPoints(amount, label) {
+            currentPoints += amount; totalCareerPoints += amount;
+            const pop = document.createElement('div');
+            pop.className = 'point-pop'; pop.innerText = `+${amount} ${label}`;
+            pop.style.left = '50%'; pop.style.top = '40%';
+            document.body.appendChild(pop); setTimeout(() => pop.remove(), 800);
+            updateUI(); updateCareerDisplay();
+        }
+
+        function updateCareerDisplay() {
+            document.getElementById('career-points').innerText = totalCareerPoints;
+            document.getElementById('career-streak').innerText = maxCareerStreak;
+        }
+
+        function setWeapon(type) {
+            currentWeaponType = type;
+            ammo = WEAPONS[type].ammo;
+            document.querySelectorAll('.card-select').forEach(c => c.classList.remove('card-active'));
+            document.getElementById('w-'+type).classList.add('card-active');
+        }
+
+        function buyPerk(key) {
+            if (totalCareerPoints >= PERKS[key].cost && !PERKS[key].bought) {
+                totalCareerPoints -= PERKS[key].cost;
+                PERKS[key].bought = true;
+                if (key === 'health') { maxHealth = 250; health = 250; }
+                document.getElementById('p-'+key).classList.add('bought');
+                updateCareerDisplay();
+            }
+        }
+
+        function toggleScope() { isScoped = !isScoped; updateUI(); }
+        function showHitMarker() { const m = document.getElementById('hit-marker'); m.style.display='block'; setTimeout(()=>m.style.display='none', 100); }
+        function triggerGameOver() { isGameOver=true; isGameRunning=false; syncUIState(); document.getElementById('game-over').style.display='flex'; }
+        function resetGame() { isGameOver=false; playerScore=0; botScore=0; currentPoints=0; syncUIState(); document.getElementById('game-over').style.display='none'; }
+
+        init();
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+    </script>
+</body>
+</html>
